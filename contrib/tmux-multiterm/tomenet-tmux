@@ -15,16 +15,16 @@
 #   |     | t3  |    |     |     |    |     | t3  |    |t1 |t2 |t3 |    |     |   |
 #   +-----+-----+    +-----+-----+    +-----+-----+    +---+---+---+    +-----+---+
 #
-#   info             max
+#   info             max (BIG_MAP-friendly)
 #   +-----+-----+    +----+--------+----+
 #   |     | t1  |    | t1 |        | t5 |
-#   |     +-----+    +----+   t0   +----+
-#   |     | t2  |    | t2 | (main) | t6 |
 #   |     +-----+    +----+        +----+
+#   |     | t2  |    | t2 |   t0   | t6 |
+#   |     +-----+    +----+ (main) +----+
 #   | t0  | t3  |    | t3 |        | t7 |
-#   |     +-----+    |    +--------+----+
+#   |     +-----+    |    |        +----+
 #   |     | t4  |    |    |        | t8 |
-#   |     +-----+    |    |   t4   +----+
+#   |     +-----+    |    |        +----+
 #   |     | t5  |    |    |        | t9 |
 #   +-----+-----+    +----+--------+----+
 #
@@ -143,16 +143,15 @@ case "$LAYOUT" in
         # pane on attach, so the game window gets keystrokes immediately.
         # Side columns are split off PANE0: right via -h (new pane right),
         # left via -bh (new pane left).
-        RIGHTCOL=$(tmux split-window -d -h  -p 30 -t "$PANE0" -P -F '#{pane_id}')
-        LEFTCOL=$( tmux split-window -d -bh -p 30 -t "$PANE0" -P -F '#{pane_id}')
+        RIGHTCOL=$(tmux split-window -d -h  -p 22 -t "$PANE0" -P -F '#{pane_id}')
+        LEFTCOL=$( tmux split-window -d -bh -p 22 -t "$PANE0" -P -F '#{pane_id}')
 
         # Left column: terms 1, 2, 3 top->bottom.
         PANE1=$LEFTCOL
         PANE2=$(tmux split-window -d -v -p 67 -t "$PANE1" -P -F '#{pane_id}')
         PANE3=$(tmux split-window -d -v -p 50 -t "$PANE2" -P -F '#{pane_id}')
 
-        # Center column: PANE0 stays as main; split off term-4 strip below.
-        PANE4=$(tmux split-window -d -v -p 25 -t "$PANE0" -P -F '#{pane_id}')
+        # Center column is just PANE0 (main) at full height for BIG_MAP.
 
         # Right column: terms 5, 6, 7, 8, 9 top->bottom.
         PANE5=$RIGHTCOL
