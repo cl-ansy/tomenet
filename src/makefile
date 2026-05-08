@@ -428,11 +428,6 @@ tomenet: LIBS += -L${X11BASE}/lib -lX11 `sdl2-config --libs` -lSDL2_mixer
 tomenet.test: CFLAGS += -DTEST_CLIENT -g3 -O0 -Wno-stringop-overflow -Wno-cpp -Wno-format-overflow -DSOUND_SDL `sdl2-config --cflags` -DUSE_X11 -I${X11BASE}/include -DCLIENT_SIDE
 tomenet.test: PPFLAGS = -DTEST_CLIENT -DSOUND_SDL `sdl2-config --cflags` 
 tomenet.test: LIBS += -L${X11BASE}/lib -lX11 `sdl2-config --libs` -lSDL2_mixer
-# Multiterm client: GCU-only client that can drive each ang_term from its own tty (e.g. tmux panes).
-# No X11 - the multiterm machinery is meaningless outside GCU. SDL audio still works.
-# Reuses CLI_OBJS - run `make clean` when switching between tomenet and tomenet.multiterm.
-tomenet.multiterm: CFLAGS += -g -O2 -DSOUND_SDL `sdl2-config --cflags` -DCLIENT_SIDE -DGCU_MULTITERM
-tomenet.multiterm: LIBS += `sdl2-config --libs` -lSDL2_mixer
 accedit: CFLAGS += -g -O2
 # Server is compiled with optimizations:
 tomenet.server: CFLAGS += -g -O2
@@ -519,9 +514,6 @@ tomenet: $(CLI_OBJS)
 
 tomenet.test: $(CLI_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o tomenet $(CLI_OBJS) $(LIBS)
-
-tomenet.multiterm: $(CLI_OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o tomenet.multiterm $(CLI_OBJS) $(LIBS)
 
 
 #

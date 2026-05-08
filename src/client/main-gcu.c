@@ -73,19 +73,16 @@ struct term_data {
 	int cols;
 
 	WINDOW *win;
-#ifdef GCU_MULTITERM
-	/* Per-tty SCREEN state, used when client was invoked with --term=IDX:tty args.
+	/* Per-tty SCREEN state, populated when client was invoked with --term=IDX:tty args.
 	 * NULL for slots not bound to an external tty (single-tty fallback path). */
 	SCREEN *scr;
 	FILE   *in_fp;
 	FILE   *out_fp;
 	int     in_fd;
-#endif
 };
 
-static term_data data[MAX_TERM_DATA_GCU]; // [4] without GCU_MULTITERM, [10] with it (defines.h)
+static term_data data[MAX_TERM_DATA_GCU]; // [10] - first 4 used by built-in tiled init; up to 10 when --term args bind external ttys (defines.h)
 
-#ifdef GCU_MULTITERM
 /* Parsed --term=IDX:tty CLI args, populated from client.c during argv processing.
  * Consumed by init_gcu() to decide between the multi-SCREEN and single-SCREEN init paths. */
 typedef struct {
@@ -120,7 +117,6 @@ int gcu_add_term_arg(const char *spec) {
 	multiterm_arg_count++;
 	return(0);
 }
-#endif /* GCU_MULTITERM */
 
 #ifndef USE_X11
 bool disable_tile_cache = FALSE; //unused in GCU, just added because it's external in generic code
@@ -559,9 +555,7 @@ static errr Term_xtra_gcu_alive(int v) {
 static void Term_init_gcu(term *t) {
 	term_data *td = (term_data *)(t->data);
 
-#ifdef GCU_MULTITERM
 	if (td->scr) set_term(td->scr);
-#endif
 
 	/* Count init's, handle first */
 	if (active++ != 0) return;
@@ -592,7 +586,6 @@ static void Term_init_gcu(term *t) {
 static void Term_nuke_gcu(term *t) {
 	term_data *td = (term_data *)(t->data);
 
-#ifdef GCU_MULTITERM
 	if (td->scr) {
 		/* Multi-SCREEN: each slot owns a SCREEN bound to a tty. Don't delwin(stdscr).
 		 * Tear everything down on last nuke. */
@@ -614,7 +607,6 @@ static void Term_nuke_gcu(term *t) {
 		keymap_norm();
 		return;
 	}
-#endif
 
 	/* Delete this window */
 	delwin(td->win);
@@ -661,10 +653,8 @@ static void Term_nuke_gcu(term *t) {
 static errr Term_xtra_gcu_event(int v) {
 	int i, k;
 
-#ifdef GCU_MULTITERM
 	/* All input arrives on term 0; bind ncurses to its SCREEN before reading. */
 	if (data[0].scr) set_term(data[0].scr);
-#endif
 
 	/* Wait */
 	if (v) {
@@ -761,9 +751,7 @@ static errr Term_xtra_gcu_event(int v) {
 static errr Term_xtra_gcu(int n, int v) {
 	term_data *td = (term_data *)(Term->data);
 
-#ifdef GCU_MULTITERM
 	if (td->scr) set_term(td->scr);
-#endif
 
 	/* Analyze the request */
 	switch (n) {
@@ -822,9 +810,7 @@ static errr Term_xtra_gcu(int n, int v) {
 static errr Term_curs_gcu(int x, int y) {
 	term_data *td = (term_data *)(Term->data);
 
-#ifdef GCU_MULTITERM
 	if (td->scr) set_term(td->scr);
-#endif
 
 	/* Literally move the cursor */
 	wmove(td->win, y, x);
@@ -841,9 +827,7 @@ static errr Term_curs_gcu(int x, int y) {
 static errr Term_wipe_gcu(int x, int y, int n) {
 	term_data *td = (term_data *)(Term->data);
 
-#ifdef GCU_MULTITERM
 	if (td->scr) set_term(td->scr);
-#endif
 
 	/* Place cursor */
 	wmove(td->win, y, x);
@@ -874,9 +858,7 @@ static errr Term_text_gcu(int x, int y, int n, byte a, cptr s) {
 	int i;
 	char text[255];
 
-#ifdef GCU_MULTITERM
 	if (td->scr) set_term(td->scr);
-#endif
 
 	/* Obtain a copy of the text */
 	for (i = 0; i < n; i++) text[i] = s[i];
@@ -956,9 +938,7 @@ static errr term_data_init(term_data *td, int rows, int cols, int y, int x) {
 	return(0);
 }
 
-#ifdef GCU_MULTITERM
 static errr init_gcu_multiterm(void);
-#endif
 
 /*
  * Prepare "curses" for use by the file "term.c"
@@ -977,10 +957,8 @@ errr init_gcu(void) {
 
 	char cols_an[6];
 
-#ifdef GCU_MULTITERM
 	/* If --term=IDX:tty args were provided, use the multi-SCREEN path instead of initscr(). */
 	if (multiterm_arg_count > 0) return(init_gcu_multiterm());
-#endif
 
 
 	/* hack -- work on Xfce4's 'Terminal' without requiring the user to set this */
@@ -1211,9 +1189,9 @@ errr init_gcu(void) {
 	if (window_hgt == MAX_WINDOW_HGT) logprint("\rRunning in BIG_MAP mode.\n"); /* For some reason, the cursor isn't at the beginning of the line */
 
 	/*** Now prepare the term(s) ***/
-	/* The built-in tiled layout fills 4 slots (main + 3 panes). With -DGCU_MULTITERM
-	 * the array supports up to MAX_TERM_DATA_GCU [10]; extras are populated from
-	 * --term=IDX:tty args (see contrib/tmux-multiterm) in a later phase.
+	/* The built-in tiled layout fills 4 slots (main + 3 panes). The array supports
+	 * up to MAX_TERM_DATA_GCU [10]; extras are populated only via the --term=IDX:tty
+	 * code path (see contrib/tmux-multiterm and init_gcu_multiterm() below).
 	 * TODO: Also drive the built-in layout from .tomenetrc, like X11 does. */
 	for (i = 0; i < MAX_TERM_DATA_GCU; i++) {
 		if (window_hgt == WINDOW_HGT) { /* normal (non-BIG_MAP) layout: Divide screen area into 4 equally sized rectangles */
@@ -1313,7 +1291,6 @@ errr init_gcu(void) {
 	return(0);
 }
 
-#ifdef GCU_MULTITERM
 /* Color/pair init for the *currently active* SCREEN. Mirrors the A_COLOR block in init_gcu().
  * Called once per SCREEN since color pairs and palette are SCREEN-scoped in ncurses. */
 static void gcu_init_screen_colors(void) {
@@ -1429,12 +1406,18 @@ static int init_gcu_multiterm_one_screen(int slot, const char *tty) {
 	cbreak();
 	noecho();
 	nonl();
-	keypad(stdscr, TRUE);
+	/* keypad() is intentionally NOT enabled - TomeNET parses arrow keys as raw ESC
+	 * sequences (nks_u[], nks_d[], ...) in c-util.c, so it needs the bytes through. */
 	nodelay(stdscr, FALSE);
 
 	gcu_init_screen_colors();
 
 	td->win = stdscr; /* this SCREEN's stdscr is our drawing target for this slot */
+
+	/* Hide cursor on side panes - they never receive input and a stray cursor is distracting.
+	 * Term 0's cursor will be (un)hidden as the game's term framework calls Term_xtra(SHAPE). */
+	if (slot != 0) curs_set(0);
+
 	return(0);
 }
 
@@ -1536,7 +1519,6 @@ static errr init_gcu_multiterm(void) {
 
 	return(0);
 }
-#endif /* GCU_MULTITERM */
 
 void enable_readability_blue_gcu(void) {
 	/* New colour code */

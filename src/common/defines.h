@@ -328,11 +328,7 @@
  /* Client-side: Maximum amount of terminal windows the client may have. */
  #define ANGBAND_TERM_MAX 10	/* POSIX X11 version */
  #define MAX_TERM_DATA 10	/* Win version */
- #ifdef GCU_MULTITERM
-  #define MAX_TERM_DATA_GCU 10	/* POSIX GCU version, one ncurses SCREEN per pane */
- #else
-  #define MAX_TERM_DATA_GCU 4	/* POSIX GCU version */
- #endif
+ #define MAX_TERM_DATA_GCU 10	/* POSIX GCU version. Up to 10 panes when --term=IDX:tty args bind to per-tty SCREENs; otherwise the built-in tiled init uses the first 4. */
 
  #define NR_OPTIONS_SHOWN	11 /* # of possible sub-window types, see window_flag_desc[]) */
 

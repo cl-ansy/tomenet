@@ -1200,7 +1200,6 @@ int main(int argc, char **argv) {
 			continue;
 		}
 
-#ifdef GCU_MULTITERM
 		/* --term=IDX:tty: bind a GCU sub-terminal to an external tty (e.g. tmux pane). Repeatable. */
 		if (!strncmp(argv[i], "--term=", 7)) {
 			extern int gcu_add_term_arg(const char *spec);
@@ -1211,7 +1210,6 @@ int main(int argc, char **argv) {
 			}
 			continue;
 		}
-#endif
 
 		/* Analyze option */
 		switch (argv[i][1]) {
