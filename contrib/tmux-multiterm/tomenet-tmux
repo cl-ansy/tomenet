@@ -4,30 +4,57 @@
 # Each pane gets its own pty; the game writes to all four directly via the
 # --term=IDX:tty client args.
 #
-# Layout (default, hardcoded — edit below to change):
+# Layouts (--layout NAME, default: 'default'):
 #
-#   +---------------------+----------+
-#   |                     | term-1   |   <- msg/chat
-#   |                     +----------+
-#   |   term-0 (main)     | term-2   |   <- inventory
-#   |                     +----------+
-#   |                     | term-3   |   <- recall/other
-#   +---------------------+----------+
+#   default          wide              tall              bottom            compact
+#   +-----+-----+    +-----+-----+    +-----+-----+    +-----------+    +-----+---+
+#   |     | t1  |    |     | t1  |    |     | t1  |    |           |    |     |   |
+#   |     +-----+    |     |     |    |     +-----+    |    t0     |    |     |   |
+#   | t0  | t2  |    | t0  +-----+    | t0  | t2  |    |           |    | t0  |t1 |
+#   |     +-----+    |     | t2  |    |     +-----+    +---+---+---+    |     |   |
+#   |     | t3  |    |     |     |    |     | t3  |    |t1 |t2 |t3 |    |     |   |
+#   +-----+-----+    +-----+-----+    +-----+-----+    +---+---+---+    +-----+---+
+#
+#   info             max
+#   +-----+-----+    +----+--------+----+
+#   |     | t1  |    | t1 |        | t5 |
+#   |     +-----+    +----+   t0   +----+
+#   |     | t2  |    | t2 | (main) | t6 |
+#   |     +-----+    +----+        +----+
+#   | t0  | t3  |    | t3 |        | t7 |
+#   |     +-----+    |    +--------+----+
+#   |     | t4  |    |    |        | t8 |
+#   |     +-----+    |    |   t4   +----+
+#   |     | t5  |    |    |        | t9 |
+#   +-----+-----+    +----+--------+----+
 #
 # Usage:
-#   ./contrib/tmux-multiterm/tomenet-tmux [tomenet args...]
+#   ./contrib/tmux-multiterm/tomenet-tmux [--layout NAME] [tomenet args...]
 #
 # Examples:
 #   ./contrib/tmux-multiterm/tomenet-tmux
-#   ./contrib/tmux-multiterm/tomenet-tmux -lMyChar mypass europe.tomenet.eu
+#   ./contrib/tmux-multiterm/tomenet-tmux --layout wide
+#   ./contrib/tmux-multiterm/tomenet-tmux --layout bottom -lMyChar mypass europe.tomenet.eu
 #
 # Notes:
 #   - Keystrokes only register in the main pane (term 0). Side panes hold a
-#     `sleep infinity` placeholder so their pty stays open; input there is lost.
-#   - Detach with Ctrl-b d, reattach with `tmux attach -t tomenet-<pid>`.
+#     `sleep` placeholder so their pty stays open; input there is lost.
+#   - Detach with <prefix> d, reattach with `tmux attach -t tomenet-<pid>`.
 #   - When the game exits, the tmux session is killed (cleaning up sleeps).
 
 set -eu
+
+# --- arg parsing --------------------------------------------------------------
+
+LAYOUT=default
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --layout=*) LAYOUT="${1#*=}"; shift ;;
+        --layout)   LAYOUT="${2:-}"; shift 2 ;;
+        --)         shift; break ;;
+        *)          break ;;
+    esac
+done
 
 # --- locate the binary --------------------------------------------------------
 
@@ -55,46 +82,121 @@ cleanup() {
 }
 trap 'rc=$?; cleanup; exit $rc' INT TERM
 
-# Detached session sized to the current terminal. Sizes don't matter much because
-# tmux will resize once we attach; what matters is that each pane has a tty.
 COLS=$(tput cols 2>/dev/null || echo 240)
 ROWS=$(tput lines 2>/dev/null || echo 60)
 tmux new-session -d -s "$SESSION" -x "$COLS" -y "$ROWS"
 
 PANE0=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)
+
+# --- layout dispatch ----------------------------------------------------------
+# Each branch sets PANE1, PANE2, PANE3 (and may leave one unset for layouts that
+# don't use 4 panes). Empty PANE_n means term n is not bound to a tty.
+
+PANE1=""; PANE2=""; PANE3=""; PANE4=""; PANE5=""; PANE6=""; PANE7=""; PANE8=""; PANE9=""
+
+case "$LAYOUT" in
+    default)
+        # Main left 50%; right column thirds.
+        PANE1=$(tmux split-window -d -h -p 50 -t "$PANE0" -P -F '#{pane_id}')
+        PANE2=$(tmux split-window -d -v -p 67 -t "$PANE1" -P -F '#{pane_id}')
+        PANE3=$(tmux split-window -d -v -p 50 -t "$PANE2" -P -F '#{pane_id}')
+        ;;
+    wide)
+        # Main left 60%; right column halves. No term-3 binding.
+        PANE1=$(tmux split-window -d -h -p 40 -t "$PANE0" -P -F '#{pane_id}')
+        PANE2=$(tmux split-window -d -v -p 50 -t "$PANE1" -P -F '#{pane_id}')
+        ;;
+    tall)
+        # Main left 60%; right column quarters (taller right column than default).
+        PANE1=$(tmux split-window -d -h -p 40 -t "$PANE0" -P -F '#{pane_id}')
+        PANE2=$(tmux split-window -d -v -p 75 -t "$PANE1" -P -F '#{pane_id}')
+        PANE3=$(tmux split-window -d -v -p 67 -t "$PANE2" -P -F '#{pane_id}')
+        # The 4th right-column slot is left as a gap (no 5th --term).
+        ;;
+    bottom)
+        # Main full width on top; three side panes in a row across the bottom.
+        BOT1=$(tmux split-window -d -v -p 30 -t "$PANE0" -P -F '#{pane_id}')
+        BOT2=$(tmux split-window -d -h -p 67 -t "$BOT1" -P -F '#{pane_id}')
+        BOT3=$(tmux split-window -d -h -p 50 -t "$BOT2" -P -F '#{pane_id}')
+        PANE1=$BOT1
+        PANE2=$BOT2
+        PANE3=$BOT3
+        ;;
+    compact)
+        # Main left 70%; one tall side pane (msg only). No term-2/term-3.
+        PANE1=$(tmux split-window -d -h -p 30 -t "$PANE0" -P -F '#{pane_id}')
+        ;;
+    info)
+        # 6 panes: main 50%; right column split into 5 horizontal stripes.
+        # Adds PANE4 + PANE5 (terms 4 and 5).
+        PANE1=$(tmux split-window -d -h -p 50 -t "$PANE0" -P -F '#{pane_id}')
+        PANE2=$(tmux split-window -d -v -p 80 -t "$PANE1" -P -F '#{pane_id}')
+        PANE3=$(tmux split-window -d -v -p 75 -t "$PANE2" -P -F '#{pane_id}')
+        PANE4=$(tmux split-window -d -v -p 67 -t "$PANE3" -P -F '#{pane_id}')
+        PANE5=$(tmux split-window -d -v -p 50 -t "$PANE4" -P -F '#{pane_id}')
+        ;;
+    max)
+        # 10 panes in reading order. Recommended for terminals >= 240x60.
+        # See header comment for the diagram. Configure in-game window flags (=)
+        # so each slot's content matches its pane's height/width.
+        # PANE0 stays as the original tmux pane throughout - that's the active
+        # pane on attach, so the game window gets keystrokes immediately.
+        # Side columns are split off PANE0: right via -h (new pane right),
+        # left via -bh (new pane left).
+        RIGHTCOL=$(tmux split-window -d -h  -p 30 -t "$PANE0" -P -F '#{pane_id}')
+        LEFTCOL=$( tmux split-window -d -bh -p 30 -t "$PANE0" -P -F '#{pane_id}')
+
+        # Left column: terms 1, 2, 3 top->bottom.
+        PANE1=$LEFTCOL
+        PANE2=$(tmux split-window -d -v -p 67 -t "$PANE1" -P -F '#{pane_id}')
+        PANE3=$(tmux split-window -d -v -p 50 -t "$PANE2" -P -F '#{pane_id}')
+
+        # Center column: PANE0 stays as main; split off term-4 strip below.
+        PANE4=$(tmux split-window -d -v -p 25 -t "$PANE0" -P -F '#{pane_id}')
+
+        # Right column: terms 5, 6, 7, 8, 9 top->bottom.
+        PANE5=$RIGHTCOL
+        PANE6=$(tmux split-window -d -v -p 80 -t "$PANE5" -P -F '#{pane_id}')
+        PANE7=$(tmux split-window -d -v -p 75 -t "$PANE6" -P -F '#{pane_id}')
+        PANE8=$(tmux split-window -d -v -p 67 -t "$PANE7" -P -F '#{pane_id}')
+        PANE9=$(tmux split-window -d -v -p 50 -t "$PANE8" -P -F '#{pane_id}')
+        ;;
+    *)
+        cleanup
+        echo "Unknown layout: '$LAYOUT'" >&2
+        echo "Available: default, wide, tall, bottom, compact" >&2
+        exit 1
+        ;;
+esac
+
+# --- collect ttys and park placeholders ---------------------------------------
+
 TTY0=$(tmux display-message -p -t "$PANE0" '#{pane_tty}')
 
-# Right column = 50% width.
-PANE1=$(tmux split-window -h -p 50 -t "$PANE0" -P -F '#{pane_id}')
-TTY1=$(tmux display-message -p -t "$PANE1" '#{pane_tty}')
+TERM_ARGS="--term=0:$TTY0"
 
-# Split the right column into thirds (33/33/33).
-PANE2=$(tmux split-window -v -p 67 -t "$PANE1" -P -F '#{pane_id}')
-TTY2=$(tmux display-message -p -t "$PANE2" '#{pane_tty}')
-PANE3=$(tmux split-window -v -p 50 -t "$PANE2" -P -F '#{pane_id}')
-TTY3=$(tmux display-message -p -t "$PANE3" '#{pane_tty}')
-
-# Park a placeholder in each side pane so its pty stays open and the shell
-# prompt doesn't repaint over the game's drawing.
-for p in "$PANE1" "$PANE2" "$PANE3"; do
+for slot_pane in "1:$PANE1" "2:$PANE2" "3:$PANE3" "4:$PANE4" "5:$PANE5" "6:$PANE6" "7:$PANE7" "8:$PANE8" "9:$PANE9"; do
+    n=${slot_pane%%:*}
+    p=${slot_pane#*:}
+    [ -n "$p" ] || continue
+    tty=$(tmux display-message -p -t "$p" '#{pane_tty}')
     tmux send-keys -t "$p" 'exec sleep 999999999' Enter
+    TERM_ARGS="$TERM_ARGS --term=$n:$tty"
 done
 
 # --- run the game in the main pane --------------------------------------------
 
-# Quote each arg so spaces survive the trip through send-keys.
+# Quote each pass-through arg so spaces survive send-keys.
 quoted=""
 for a in "$@"; do
     esc=$(printf '%s' "$a" | sed "s/'/'\\\\''/g")
     quoted="$quoted '$esc'"
 done
 
-# -c forces the GCU (curses) interface even though the binary also has X11
-# compiled in. `cd` so the binary finds lib/. After the game exits, kill the
-# session so the placeholder sleeps in the side panes also die.
-GAME_CMD="cd '$REPO_ROOT' && exec '$BIN' -c --term=0:$TTY0 --term=1:$TTY1 --term=2:$TTY2 --term=3:$TTY3$quoted"
+# -c forces GCU (the binary also has X11 compiled in). `cd` so lib/ is found.
+# After the game exits, kill the session so side-pane sleeps die too.
+GAME_CMD="cd '$REPO_ROOT' && exec '$BIN' -c $TERM_ARGS$quoted"
 tmux send-keys -t "$PANE0" "$GAME_CMD; tmux kill-session -t $SESSION" Enter
 
-# Hand off to the user. exec replaces us, so the trap is no longer needed.
 trap - INT TERM
 exec tmux attach -t "$SESSION"
