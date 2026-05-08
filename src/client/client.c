@@ -1200,6 +1200,19 @@ int main(int argc, char **argv) {
 			continue;
 		}
 
+#ifdef GCU_MULTITERM
+		/* --term=IDX:tty: bind a GCU sub-terminal to an external tty (e.g. tmux pane). Repeatable. */
+		if (!strncmp(argv[i], "--term=", 7)) {
+			extern int gcu_add_term_arg(const char *spec);
+			if (gcu_add_term_arg(argv[i] + 7) < 0) {
+				fprintf(stderr, "Invalid --term arg: %s (expected --term=IDX:/dev/pts/N)\n", argv[i]);
+				modus = -1;
+				i = argc;
+			}
+			continue;
+		}
+#endif
+
 		/* Analyze option */
 		switch (argv[i][1]) {
 		/* ignore rc files */

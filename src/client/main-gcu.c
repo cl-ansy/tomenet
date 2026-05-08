@@ -73,9 +73,54 @@ struct term_data {
 	int cols;
 
 	WINDOW *win;
+#ifdef GCU_MULTITERM
+	/* Per-tty SCREEN state, used when client was invoked with --term=IDX:tty args.
+	 * NULL for slots not bound to an external tty (single-tty fallback path). */
+	SCREEN *scr;
+	FILE   *in_fp;
+	FILE   *out_fp;
+	int     in_fd;
+#endif
 };
 
-static term_data data[MAX_TERM_DATA_GCU]; // [4], defines.h
+static term_data data[MAX_TERM_DATA_GCU]; // [4] without GCU_MULTITERM, [10] with it (defines.h)
+
+#ifdef GCU_MULTITERM
+/* Parsed --term=IDX:tty CLI args, populated from client.c during argv processing.
+ * Consumed by init_gcu() to decide between the multi-SCREEN and single-SCREEN init paths. */
+typedef struct {
+	int idx;
+	char tty[256];
+} multiterm_arg_t;
+
+static multiterm_arg_t multiterm_args[MAX_TERM_DATA_GCU];
+static int multiterm_arg_count = 0;
+
+/* Parse and store one --term=IDX:tty entry. Returns 0 on success, -1 on bad input.
+ * Exposed for client.c argv loop. */
+int gcu_add_term_arg(const char *spec) {
+	const char *colon;
+	int idx, j;
+	const char *tty;
+
+	if (!spec) return(-1);
+	colon = strchr(spec, ':');
+	if (!colon || colon == spec) return(-1);
+	idx = atoi(spec);
+	if (idx < 0 || idx >= MAX_TERM_DATA_GCU) return(-1);
+	tty = colon + 1;
+	if (!*tty) return(-1);
+	for (j = 0; j < multiterm_arg_count; j++)
+		if (multiterm_args[j].idx == idx) return(-1); /* duplicate index */
+	if (multiterm_arg_count >= MAX_TERM_DATA_GCU) return(-1);
+	multiterm_args[multiterm_arg_count].idx = idx;
+	strncpy(multiterm_args[multiterm_arg_count].tty, tty,
+	        sizeof(multiterm_args[0].tty) - 1);
+	multiterm_args[multiterm_arg_count].tty[sizeof(multiterm_args[0].tty) - 1] = '\0';
+	multiterm_arg_count++;
+	return(0);
+}
+#endif /* GCU_MULTITERM */
 
 #ifndef USE_X11
 bool disable_tile_cache = FALSE; //unused in GCU, just added because it's external in generic code
@@ -514,6 +559,10 @@ static errr Term_xtra_gcu_alive(int v) {
 static void Term_init_gcu(term *t) {
 	term_data *td = (term_data *)(t->data);
 
+#ifdef GCU_MULTITERM
+	if (td->scr) set_term(td->scr);
+#endif
+
 	/* Count init's, handle first */
 	if (active++ != 0) return;
 
@@ -542,6 +591,30 @@ static void Term_init_gcu(term *t) {
  */
 static void Term_nuke_gcu(term *t) {
 	term_data *td = (term_data *)(t->data);
+
+#ifdef GCU_MULTITERM
+	if (td->scr) {
+		/* Multi-SCREEN: each slot owns a SCREEN bound to a tty. Don't delwin(stdscr).
+		 * Tear everything down on last nuke. */
+		if (--active != 0) return;
+		{
+			int i;
+			for (i = 0; i < MAX_TERM_DATA_GCU; i++) {
+				if (!data[i].scr) continue;
+				set_term(data[i].scr);
+				curs_set(1);
+				endwin();
+				delscreen(data[i].scr);
+				data[i].scr = NULL;
+				if (data[i].in_fp)  { fclose(data[i].in_fp);  data[i].in_fp  = NULL; }
+				if (data[i].out_fp) { fclose(data[i].out_fp); data[i].out_fp = NULL; }
+				data[i].win = NULL;
+			}
+		}
+		keymap_norm();
+		return;
+	}
+#endif
 
 	/* Delete this window */
 	delwin(td->win);
@@ -587,6 +660,11 @@ static void Term_nuke_gcu(term *t) {
  */
 static errr Term_xtra_gcu_event(int v) {
 	int i, k;
+
+#ifdef GCU_MULTITERM
+	/* All input arrives on term 0; bind ncurses to its SCREEN before reading. */
+	if (data[0].scr) set_term(data[0].scr);
+#endif
 
 	/* Wait */
 	if (v) {
@@ -683,6 +761,10 @@ static errr Term_xtra_gcu_event(int v) {
 static errr Term_xtra_gcu(int n, int v) {
 	term_data *td = (term_data *)(Term->data);
 
+#ifdef GCU_MULTITERM
+	if (td->scr) set_term(td->scr);
+#endif
+
 	/* Analyze the request */
 	switch (n) {
 		/* Clear screen */
@@ -740,6 +822,10 @@ static errr Term_xtra_gcu(int n, int v) {
 static errr Term_curs_gcu(int x, int y) {
 	term_data *td = (term_data *)(Term->data);
 
+#ifdef GCU_MULTITERM
+	if (td->scr) set_term(td->scr);
+#endif
+
 	/* Literally move the cursor */
 	wmove(td->win, y, x);
 
@@ -754,6 +840,10 @@ static errr Term_curs_gcu(int x, int y) {
  */
 static errr Term_wipe_gcu(int x, int y, int n) {
 	term_data *td = (term_data *)(Term->data);
+
+#ifdef GCU_MULTITERM
+	if (td->scr) set_term(td->scr);
+#endif
 
 	/* Place cursor */
 	wmove(td->win, y, x);
@@ -783,6 +873,10 @@ static errr Term_text_gcu(int x, int y, int n, byte a, cptr s) {
 	term_data *td = (term_data *)(Term->data);
 	int i;
 	char text[255];
+
+#ifdef GCU_MULTITERM
+	if (td->scr) set_term(td->scr);
+#endif
 
 	/* Obtain a copy of the text */
 	for (i = 0; i < n; i++) text[i] = s[i];
@@ -862,6 +956,10 @@ static errr term_data_init(term_data *td, int rows, int cols, int y, int x) {
 	return(0);
 }
 
+#ifdef GCU_MULTITERM
+static errr init_gcu_multiterm(void);
+#endif
+
 /*
  * Prepare "curses" for use by the file "term.c"
  *
@@ -878,6 +976,11 @@ errr init_gcu(void) {
 	int rows[MAX_TERM_DATA_GCU], cols[MAX_TERM_DATA_GCU], y[MAX_TERM_DATA_GCU], x[MAX_TERM_DATA_GCU];
 
 	char cols_an[6];
+
+#ifdef GCU_MULTITERM
+	/* If --term=IDX:tty args were provided, use the multi-SCREEN path instead of initscr(). */
+	if (multiterm_arg_count > 0) return(init_gcu_multiterm());
+#endif
 
 
 	/* hack -- work on Xfce4's 'Terminal' without requiring the user to set this */
@@ -1209,6 +1312,231 @@ errr init_gcu(void) {
 	/* Success */
 	return(0);
 }
+
+#ifdef GCU_MULTITERM
+/* Color/pair init for the *currently active* SCREEN. Mirrors the A_COLOR block in init_gcu().
+ * Called once per SCREEN since color pairs and palette are SCREEN-scoped in ncurses. */
+static void gcu_init_screen_colors(void) {
+#ifdef A_COLOR
+	int i;
+
+#define MT_RED(i)   (((client_color_map[i] >> 16 & 0xff) * 1000 + 127) / 255)
+#define MT_GREEN(i) (((client_color_map[i] >> 8 & 0xff) * 1000 + 127) / 255)
+#define MT_BLUE(i)  (((client_color_map[i] & 0xff) * 1000 + 127) / 255)
+
+	can_use_color = ((start_color() != ERR) && has_colors() &&
+	                 (COLORS >= 8) && (COLOR_PAIRS >= 8));
+	can_fix_color = (can_use_color && can_change_color() &&
+	                 (COLOR_PAIRS >= 16) && (COLORS >= 16));
+	can_use_256_color = (can_use_color && (COLOR_PAIRS >= 16) && (COLORS >= 256));
+
+	if (can_fix_color) {
+		for (i = 0; i < CLIENT_PALETTE_SIZE; i++)
+			init_pair(i, i, COLOR_BLACK);
+		for (i = 0; i < CLIENT_PALETTE_SIZE; i++)
+			color_content(i, &cor[i], &cog[i], &cob[i]);
+		for (i = 0; i < CLIENT_PALETTE_SIZE; i++) {
+			init_color(i, MT_RED(i), MT_GREEN(i), MT_BLUE(i));
+			colortable[i] = (COLOR_PAIR(i % 16) | A_NORMAL);
+		}
+	} else if (can_use_256_color) {
+		int j;
+		int color_palette[CLIENT_PALETTE_SIZE] = { 0 };
+
+		for (i = 0; i < 256; i++)
+			color_content(i, &cor[i], &cog[i], &cob[i]);
+
+		for (i = 0; i < BASE_PALETTE_SIZE; i++) {
+			int want_red = MT_RED(i), want_green = MT_GREEN(i), want_blue = MT_BLUE(i);
+			int best_idx = COLOR_WHITE;
+			int best_distance = 3 * 256;
+			for (j = 0; j < 256; j++) {
+				int distance = abs(want_red - cor[j]) + abs(want_green - cog[j]) + abs(want_blue - cob[j]);
+				if (distance < best_distance) { best_distance = distance; best_idx = j; }
+			}
+			color_palette[i] = best_idx;
+#ifdef EXTENDED_COLOURS_PALANIM
+			color_palette[i + BASE_PALETTE_SIZE] = color_palette[i];
+#endif
+		}
+		for (i = 0; i < CLIENT_PALETTE_SIZE; i++)
+			init_pair(i, color_palette[i], COLOR_BLACK);
+		for (i = 0; i < CLIENT_PALETTE_SIZE; i++)
+			colortable[i] = (COLOR_PAIR(i) | A_NORMAL);
+	} else if (can_use_color) {
+		init_pair(1, COLOR_RED,     COLOR_BLACK);
+		init_pair(2, COLOR_GREEN,   COLOR_BLACK);
+		init_pair(3, COLOR_YELLOW,  COLOR_BLACK);
+		init_pair(4, COLOR_BLUE,    COLOR_BLACK);
+		init_pair(5, COLOR_MAGENTA, COLOR_BLACK);
+		init_pair(6, COLOR_CYAN,    COLOR_BLACK);
+		init_pair(7, COLOR_BLACK,   COLOR_BLACK);
+		colortable[0]  = (COLOR_PAIR(7) | A_NORMAL);
+		colortable[1]  = (COLOR_PAIR(0) | A_BRIGHT);
+		colortable[2]  = (COLOR_PAIR(0) | A_NORMAL);
+		colortable[3]  = (COLOR_PAIR(3) | A_NORMAL);
+		colortable[4]  = (COLOR_PAIR(1) | A_NORMAL);
+		colortable[5]  = (COLOR_PAIR(2) | A_NORMAL);
+		colortable[6]  = (COLOR_PAIR(4) | A_NORMAL);
+		colortable[7]  = (COLOR_PAIR(3) | A_NORMAL);
+		colortable[8]  = (COLOR_PAIR(7) | A_BRIGHT);
+		colortable[9]  = (COLOR_PAIR(0) | A_BRIGHT);
+		colortable[10] = (COLOR_PAIR(5) | A_NORMAL);
+		colortable[11] = (COLOR_PAIR(3) | A_BRIGHT);
+		colortable[12] = (COLOR_PAIR(1) | A_BRIGHT);
+		colortable[13] = (COLOR_PAIR(2) | A_BRIGHT);
+		colortable[14] = (COLOR_PAIR(4) | A_BRIGHT);
+		colortable[15] = (COLOR_PAIR(3) | A_NORMAL);
+#ifdef EXTENDED_COLOURS_PALANIM
+		for (i = 0; i < BASE_PALETTE_SIZE; i++)
+			colortable[i + BASE_PALETTE_SIZE] = colortable[i];
+#endif
+	}
+
+#undef MT_RED
+#undef MT_GREEN
+#undef MT_BLUE
+#endif /* A_COLOR */
+}
+
+/* Open one tty and bring up an ncurses SCREEN bound to it. Stores everything on data[slot]. */
+static int init_gcu_multiterm_one_screen(int slot, const char *tty) {
+	term_data *td = &data[slot];
+	struct winsize ws;
+
+	td->in_fp = fopen(tty, "r");
+	if (!td->in_fp) return(-1);
+	td->out_fp = fopen(tty, "w");
+	if (!td->out_fp) { fclose(td->in_fp); td->in_fp = NULL; return(-1); }
+	setvbuf(td->out_fp, NULL, _IONBF, 0);
+	td->in_fd = fileno(td->in_fp);
+
+	if (ioctl(td->in_fd, TIOCGWINSZ, &ws) < 0 || ws.ws_row == 0 || ws.ws_col == 0) {
+		ws.ws_row = 24;
+		ws.ws_col = 80;
+	}
+	td->rows = ws.ws_row;
+	td->cols = ws.ws_col;
+
+	td->scr = newterm(getenv("TERM"), td->out_fp, td->in_fp);
+	if (!td->scr) {
+		fclose(td->in_fp);  td->in_fp  = NULL;
+		fclose(td->out_fp); td->out_fp = NULL;
+		return(-1);
+	}
+	set_term(td->scr);
+
+	cbreak();
+	noecho();
+	nonl();
+	keypad(stdscr, TRUE);
+	nodelay(stdscr, FALSE);
+
+	gcu_init_screen_colors();
+
+	td->win = stdscr; /* this SCREEN's stdscr is our drawing target for this slot */
+	return(0);
+}
+
+static errr init_gcu_multiterm(void) {
+	int k, slot;
+	bool have_main = FALSE;
+	int window_wid, window_hgt;
+
+	for (k = 0; k < multiterm_arg_count; k++)
+		if (multiterm_args[k].idx == 0) { have_main = TRUE; break; }
+	if (!have_main) {
+		fprintf(stderr, "ERROR: --term=0:tty (main window) is required.\n");
+		return(-1);
+	}
+
+	if (!getenv("TERM") ||
+	    (!strcmp(getenv("TERM"), "xterm") && !getenv("XTERM_VERSION")))
+		setenv("TERM", "xterm-16color", -1);
+
+	keymap_norm_prepare();
+
+	for (k = 0; k < multiterm_arg_count; k++) {
+		slot = multiterm_args[k].idx;
+		if (init_gcu_multiterm_one_screen(slot, multiterm_args[k].tty) != 0) {
+			fprintf(stderr, "ERROR: failed to initialize term %d on tty %s\n",
+			        slot, multiterm_args[k].tty);
+			return(-2);
+		}
+	}
+
+	/* Min-size check on the main pane */
+	if (data[0].cols < WINDOW_WID || data[0].rows < WINDOW_HGT) {
+		fprintf(stderr, "ERROR: main term needs at least %dx%d (got %dx%d).\n",
+		        WINDOW_WID, WINDOW_HGT, data[0].cols, data[0].rows);
+		return(-3);
+	}
+
+	use_graphics_new = use_graphics = FALSE;
+
+#ifdef GLOBAL_BIG_MAP
+	if (global_c_cfg_big_map) {
+		if (data[0].cols < MAX_WINDOW_WID || data[0].rows < MAX_WINDOW_HGT) {
+			fprintf(stderr, "WARNING: BIG_MAP requires %dx%d on main term; falling back.\n",
+			        MAX_WINDOW_WID, MAX_WINDOW_HGT);
+			global_c_cfg_big_map = FALSE;
+			window_wid = WINDOW_WID; window_hgt = WINDOW_HGT;
+		} else {
+			window_wid = MAX_WINDOW_WID; window_hgt = MAX_WINDOW_HGT;
+		}
+	} else {
+		window_wid = WINDOW_WID; window_hgt = WINDOW_HGT;
+	}
+#else
+	c_cfg.big_map = FALSE;
+	Client_setup.options[CO_BIGMAP] = FALSE;
+	(*option_info[CO_BIGMAP].o_var) = FALSE;
+	window_wid = WINDOW_WID; window_hgt = WINDOW_HGT;
+#endif
+	(void)window_wid; (void)window_hgt; /* sizes come from per-tty TIOCGWINSZ */
+
+	c_cfg.palette_animation = FALSE;
+	(*option_info[CO_PALETTE_ANIMATION].o_var) = FALSE;
+	Client_setup.options[CO_PALETTE_ANIMATION] = FALSE;
+
+	resize_main_window = resize_main_window_gcu;
+
+	keymap_game_prepare();
+
+	/* Wire each requested slot into the term framework. */
+	for (k = 0; k < multiterm_arg_count; k++) {
+		term_data *td;
+		term *t;
+
+		slot = multiterm_args[k].idx;
+		td = &data[slot];
+		t = &td->t;
+
+		set_term(td->scr);
+
+		term_init(t, td->cols, td->rows, 256);
+		t->icky_corner = TRUE;
+		t->attr_blank = TERM_WHITE;
+		t->char_blank = ' ';
+		t->init_hook = Term_init_gcu;
+		t->nuke_hook = Term_nuke_gcu;
+		t->text_hook = Term_text_gcu;
+		t->wipe_hook = Term_wipe_gcu;
+		t->curs_hook = Term_curs_gcu;
+		t->xtra_hook = Term_xtra_gcu;
+		t->data = td;
+		Term_activate(t);
+		ang_term[slot] = Term;
+	}
+
+	/* Make term 0 (main) the active term. */
+	set_term(data[0].scr);
+	Term_activate(&data[0].t);
+	term_term_main = &data[0].t;
+
+	return(0);
+}
+#endif /* GCU_MULTITERM */
 
 void enable_readability_blue_gcu(void) {
 	/* New colour code */
