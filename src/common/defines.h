@@ -328,7 +328,11 @@
  /* Client-side: Maximum amount of terminal windows the client may have. */
  #define ANGBAND_TERM_MAX 10	/* POSIX X11 version */
  #define MAX_TERM_DATA 10	/* Win version */
- #define MAX_TERM_DATA_GCU 4	/* POSIX GCU version */
+ #ifdef GCU_MULTITERM
+  #define MAX_TERM_DATA_GCU 10	/* POSIX GCU version, one ncurses SCREEN per pane */
+ #else
+  #define MAX_TERM_DATA_GCU 4	/* POSIX GCU version */
+ #endif
 
  #define NR_OPTIONS_SHOWN	11 /* # of possible sub-window types, see window_flag_desc[]) */
 

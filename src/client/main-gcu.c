@@ -1108,12 +1108,13 @@ errr init_gcu(void) {
 	if (window_hgt == MAX_WINDOW_HGT) logprint("\rRunning in BIG_MAP mode.\n"); /* For some reason, the cursor isn't at the beginning of the line */
 
 	/*** Now prepare the term(s) ***/
-	/* TODO: Create the term layout from the term info we read from .tomenetrc instead, like for X11 clients.
-		 Allow increasing MAX_TERM_DATA_GCU up to 10 like for ANGBAND_TERM_MAX,
-		 see occurances of "if (strcmp(ANGBAND_SYS, "gcu"))". */
+	/* The built-in tiled layout fills 4 slots (main + 3 panes). With -DGCU_MULTITERM
+	 * the array supports up to MAX_TERM_DATA_GCU [10]; extras are populated from
+	 * --term=IDX:tty args (see contrib/tmux-multiterm) in a later phase.
+	 * TODO: Also drive the built-in layout from .tomenetrc, like X11 does. */
 	for (i = 0; i < MAX_TERM_DATA_GCU; i++) {
 		if (window_hgt == WINDOW_HGT) { /* normal (non-BIG_MAP) layout: Divide screen area into 4 equally sized rectangles */
-			switch (i) { /* Hard-coded: Only MAX_TERM_DATA_GCU [4] pseudo-'terminals' in any case, the main screen + 3 others. */
+			switch (i) { /* 4 baseline slots; further indices fall through to default (zero-sized, discarded). */
 			case 0:  /* Hard-coded: 'screen/term-main' (Main Window) */
 				rows[i] = window_hgt;
 				cols[i] = window_wid;
@@ -1143,7 +1144,7 @@ errr init_gcu(void) {
 				break;
 			}
 		} else { /* big-map mode: Main Screen takes full height, other windows get split up to its right */
-			switch (i) { /* Hard-coded: Only MAX_TERM_DATA_GCU [4] pseudo-'terminals' in any case, the main screen + 3 others. */
+			switch (i) { /* 4 baseline slots; further indices fall through to default (zero-sized, discarded). */
 			case 0:  /* Hard-coded: 'screen/term-main' (Main Window) */
 				rows[i] = window_hgt;
 				cols[i] = window_wid;
@@ -1176,6 +1177,8 @@ errr init_gcu(void) {
 
 		/* Term doesn't fit on the screen anymore? Discard it. */
 		if (rows[i] <= 0 || cols[i] <= 0) {
+			/* Slots beyond the 4 baseline are expected empty until populated elsewhere. */
+			if (i >= 4) continue;
 			fprintf(stderr, "\rWARNING: Discarding term #%d at %d,%d with dimensions %d,%d\n", next_win, x[i], y[i], cols[i], rows[i]);
 			continue;
 		}
